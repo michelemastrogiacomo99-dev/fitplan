@@ -4,7 +4,8 @@
 <pre id="out"></pre>
 <script type="module">
 import * as L from './logic.js';
-import { DEFAULT_PROGRAM, DEFAULT_RECIPES } from './seed.js';
+import { DEFAULT_PROGRAM, DEFAULT_RECIPES, SUGGESTED_RECIPES } from './seed.js';
+import { builtinPhoto } from './images.js';
 
 const fails = []; let n = 0;
 const ok = (cond, msg) => { n++; if (!cond) fails.push(msg); };
@@ -156,6 +157,11 @@ for (let t = 0; t < 3000; t++) {
   const p = L.buildPlan(DEFAULT_RECIPES.filter(L.isMain).map(r => r.id), DEFAULT_RECIPES);
   ok(p.flatMap(d => [d.b, d.l, d.d]).every(Boolean), 'default recipes fill a whole week');
   ok(L.shoppingItems(p, DEFAULT_RECIPES).every(i => i.qty > 0), 'default week → positive quantities');
+  const all = [...DEFAULT_RECIPES, ...SUGGESTED_RECIPES], allIds = all.map(r => r.id);
+  eq(new Set(allIds).size, allIds.length, 'suggested recipe ids do not clash with the default ones');
+  ok(SUGGESTED_RECIPES.every(r => r.name && ['main', 'breakfast'].includes(r.type) && r.ingredients.length && r.ingredients.every(i => i.name && i.qty > 0 && L.UNITS.includes(i.unit))), 'suggested recipes are complete, units known');
+  eq(all.filter(r => !/^https:\/\/images\.unsplash\.com\/photo-[\w-]+\?/.test(builtinPhoto(r.id, 'card'))).map(r => r.id), [], 'every built-in dish has a photo');
+  eq(builtinPhoto('made-by-user'), '', 'no built-in photo for a user recipe');
 }
 
 document.title = fails.length ? `FAIL ${fails.length}/${n}` : `PASS ${n}`;

@@ -18,6 +18,9 @@ service cloud.firestore {
     match /shared/{doc} {
       allow read, write: if member();
     }
+    match /photos/{recipe} {
+      allow read, write: if member();
+    }
     match /weeks/{week} {
       allow read, write: if member();
     }

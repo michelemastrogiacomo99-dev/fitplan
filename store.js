@@ -38,13 +38,18 @@ function localStore() {
     },
     save(path, data) { write(path, data); },
     update(path, patch) { write(path, applyPatch(read(path), patch)); },
+    remove(path) {
+      localStorage.removeItem(key(path));
+      [...(watchers.get(path) || [])].forEach(cb => cb(null, false, false));
+    },
   };
 }
 
 export const FIREBASE_SDK = 'https://www.gstatic.com/firebasejs/10.12.2/';
 
 export async function initStore() {
-  if (!firebaseConfig || !firebaseConfig.apiKey) return localStore();
+  // "?local" in the address forces local mode: used to test the app without touching the real data
+  if (!firebaseConfig || !firebaseConfig.apiKey || new URLSearchParams(location.search).has('local')) return localStore();
   const [{ initializeApp }, A, F] = await Promise.all([
     import(FIREBASE_SDK + 'firebase-app.js'),
     import(FIREBASE_SDK + 'firebase-auth.js'),
@@ -78,5 +83,6 @@ export async function initStore() {
     ),
     save: (path, data) => { F.setDoc(F.doc(db, path), data).catch(failed(path)); },
     update: (path, patch) => { F.setDoc(F.doc(db, path), toFirestore(patch), { merge: true }).catch(failed(path)); },
+    remove: path => { F.deleteDoc(F.doc(db, path)).catch(failed(path)); },
   };
 }

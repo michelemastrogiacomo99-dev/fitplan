@@ -1,5 +1,6 @@
 import { initStore } from './store.js';
-import { DEFAULT_PROGRAM, DEFAULT_RECIPES } from './seed.js';
+import { DEFAULT_PROGRAM, DEFAULT_RECIPES, SUGGESTED_RECIPES } from './seed.js';
+import { builtinPhoto } from './images.js';
 import {
   DAYS, MEALS, UNITS, iso, fromIso, dow, num, planningWeek, shiftWeek,
   convWeight, entryStats, isMain, coverage, buildPlan, shoppingItems, OP, applyPatch,
@@ -19,9 +20,10 @@ const S = {
   tab: 'gym', mealsTab: 'plan', gymDay: dow(), weekId: planningWeek(),
   user: undefined, profile: null, logs: null, diet: null, week: undefined, // week: undefined = still loading
   progEx: null, metric: 'top', extraSets: {}, moving: null, lastSwipe: null, editProgram: false, progDay: dow(),
-  itemDraft: '', error: '',
+  itemDraft: '', error: '', photos: {},
 };
 let store, unsubs = [], unsubWeek = null, dirty = false, lastDay = today(), dietDoc = null;
+const photoSubs = new Map(); // recipe id → stop watching its photo
 
 const unit = () => S.profile.unit || 'lb';
 const shopSystem = () => S.profile.shopUnits || 'metric';
@@ -37,6 +39,37 @@ const updateDiet = patch => { setDiet(applyPatch(dietDoc, patch)); store.update(
 function setDiet(doc) {
   dietDoc = doc;
   S.diet = { ...doc, recipes: Object.values(doc.recipes || {}).sort((a, b) => (a.o ?? 0) - (b.o ?? 0) || String(a.name).localeCompare(b.name)) };
+  // a recipe's own photo lives in its own document (photos/<id>), loaded only for the recipes that have one
+  const want = new Set(S.diet.recipes.filter(r => r.photo).map(r => r.id));
+  for (const [id, stop] of photoSubs) if (!want.has(id)) { stop(); photoSubs.delete(id); delete S.photos[id]; }
+  for (const id of want) if (!photoSubs.has(id)) {
+    photoSubs.set(id, () => {}); // placeholder: a local watch answers before watch() returns
+    photoSubs.set(id, store.watch(`photos/${id}`, d => { if (d?.data) { S.photos[id] = d.data; render(); } }));
+  }
+}
+
+// ---------- photos ----------
+const photoUrl = (r, size) => (r.photo && S.photos[r.id]) || builtinPhoto(r.id, size);
+// A tile with the dish's initial; the photo covers it once loaded and removes itself if it cannot load.
+function pic(r, cls, size = 'thumb') {
+  const url = photoUrl(r, size);
+  return `<span class="pic ${cls}" aria-hidden="true">${esc((r.name || '?').trim()[0] || '?')}${url
+    ? `<img src="${esc(url)}" alt="" loading="lazy" draggable="false" ${url.startsWith('data:') ? '' : 'crossorigin="anonymous"'} onerror="this.remove()">` : ''}</span>`;
+}
+function resizeImage(file, max = 720) {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file), im = new Image();
+    im.onload = () => {
+      const s = Math.min(1, max / Math.max(im.width, im.height));
+      const c = document.createElement('canvas');
+      c.width = Math.max(1, Math.round(im.width * s)); c.height = Math.max(1, Math.round(im.height * s));
+      c.getContext('2d').drawImage(im, 0, 0, c.width, c.height);
+      URL.revokeObjectURL(url);
+      resolve(c.toDataURL('image/jpeg', 0.72));
+    };
+    im.onerror = () => { URL.revokeObjectURL(url); reject(new Error('not an image')); };
+    im.src = url;
+  });
 }
 
 // ---------- data wiring ----------
@@ -76,6 +109,7 @@ function watchWeek() {
 function unsubscribe() {
   unsubs.forEach(u => u()); unsubs = [];
   unsubWeek?.(); unsubWeek = null;
+  photoSubs.forEach(stop => stop()); photoSubs.clear(); S.photos = {};
   S.profile = S.logs = S.diet = dietDoc = null; S.week = undefined; S.itemDraft = S.error = '';
   S.moving = S.lastSwipe = S.progEx = null; S.extraSets = {}; S.editProgram = false;
   S.tab = 'gym'; S.mealsTab = 'plan'; S.metric = 'top'; S.gymDay = S.progDay = dow(); S.weekId = planningWeek();
@@ -273,7 +307,7 @@ function viewPlan() {
           const r = recipe(day[m]);
           const moving = S.moving && S.moving.d === d && S.moving.m === m;
           return `<button class="slot ${moving ? 'moving' : ''}" data-act="slot" data-d="${d}" data-m="${m}">
-            <span class="slot-k">${MEALS[m]}</span><span class="slot-v ${r ? '' : 'muted'}">${r ? esc(r.name) : 'Empty'}</span>
+            <span class="slot-k">${MEALS[m]}</span>${r ? pic(r, 'sm') : ''}<span class="slot-v ${r ? '' : 'muted'}">${r ? esc(r.name) : 'Empty'}</span>
             ${r && day.left?.[m] ? '<span class="tag">Leftovers</span>' : ''}</button>`;
         }).join('')}</section>`;
     }).join('')}`;
@@ -287,7 +321,7 @@ function viewPick() {
   const head = `<p class="pick-count"><strong>${Math.min(covered, target())}</strong> of ${target()} lunches and dinners covered</p>
     <div class="bar"><i style="width:${Math.min(100, covered / target() * 100)}%"></i></div>`;
   const picked = liked.length ? `<section class="card"><h2>Picked</h2>${liked.map(id => `
-    <div class="slot"><span class="slot-v">${esc(recipe(id).name)}</span>${recipe(id).leftovers ? '<span class="tag">Leftovers</span>' : ''}
+    <div class="slot">${pic(recipe(id), 'sm')}<span class="slot-v">${esc(recipe(id).name)}</span>${recipe(id).leftovers ? '<span class="tag">Leftovers</span>' : ''}
     <button class="link danger" data-act="unpick" data-id="${esc(id)}" aria-label="Remove ${esc(recipe(id).name)}">✕</button></div>`).join('')}</section>` : '';
   if (covered >= target()) return `${head}<div class="empty"><h2>Week picked</h2>
     <button class="btn primary" data-act="rebuild">${w.plan ? 'Rebuild week plan' : 'Build week plan'}</button>
@@ -299,13 +333,16 @@ function viewPick() {
   const r = deck[0];
   return `${head}
     <div class="deck">
-      ${deck[1] ? `<div class="swipe-card under"><h2>${esc(deck[1].name)}</h2></div>` : ''}
+      ${deck[1] ? `<div class="swipe-card under">${pic(deck[1], 'hero', 'card')}</div>` : ''}
       <div class="swipe-card" data-id="${esc(r.id)}">
+        ${pic(r, 'hero', 'card')}
         <span class="stamp yes">YES</span><span class="stamp no">NOPE</span>
-        <h2>${esc(r.name)}</h2>
-        ${r.leftovers ? '<p><span class="tag">Leftovers · covers 2 meals</span></p>' : ''}
-        ${ingList(r)}
-        ${r.steps ? `<p class="muted steps">${esc(r.steps)}</p>` : ''}
+        <div class="swipe-body">
+          <h2>${esc(r.name)}</h2>
+          ${r.leftovers ? '<p><span class="tag">Leftovers · covers 2 meals</span></p>' : ''}
+          ${ingList(r)}
+          ${r.steps ? `<p class="muted steps">${esc(r.steps)}</p>` : ''}
+        </div>
       </div>
     </div>
     <div class="swipe-btns">
@@ -318,13 +355,20 @@ function viewPick() {
 
 function viewRecipes() {
   const group = (title, list) => list.length ? `<section class="card"><h2>${title}</h2>${list.map(r => `
-    <button class="slot" data-act="editRecipe" data-id="${esc(r.id)}"><span class="slot-v">${esc(r.name)}</span>
+    <button class="slot" data-act="editRecipe" data-id="${esc(r.id)}">${pic(r, 'md')}<span class="slot-v">${esc(r.name)}</span>
     ${r.leftovers && isMain(r) ? '<span class="tag">Leftovers</span>' : ''}<span class="muted">${r.ingredients.length} ingr.</span></button>`).join('')}</section>` : '';
   const sorted = [...S.diet.recipes].sort((a, b) => a.name.localeCompare(b.name));
+  const ideas = suggestions();
   return `<button class="btn primary" data-act="newRecipe">+ New recipe</button>
     ${group('Lunch & dinner', sorted.filter(isMain))}
-    ${group('Breakfast', sorted.filter(r => !isMain(r)))}`;
+    ${group('Breakfast', sorted.filter(r => !isMain(r)))}
+    ${ideas.length ? `<section class="card"><div class="card-head"><div><h2>Suggested</h2><p class="muted">Ideas you can add to your recipes</p></div>
+      <button class="link" data-act="addAllSuggested">Add all</button></div>${ideas.map(r => `
+      <div class="slot" role="button" tabindex="0" data-act="viewSuggested" data-id="${esc(r.id)}">${pic(r, 'md')}<span class="slot-v">${esc(r.name)}</span>
+      <button class="link" data-act="addSuggested" data-id="${esc(r.id)}" aria-label="Add ${esc(r.name)}">Add</button></div>`).join('')}</section>` : ''}`;
 }
+// built-in ideas that are not in the recipes yet
+const suggestions = () => SUGGESTED_RECIPES.filter(s => !recipe(s.id));
 
 function bindSwipe() {
   const c = $('.swipe-card:not(.under)');
@@ -460,6 +504,10 @@ function recipeSheet(r) {
     <form id="recipeForm" data-id="${esc(r.id)}" novalidate>
       <div class="sheet-head"><h2>${isNew ? 'New recipe' : 'Edit recipe'}</h2><button type="button" class="link" data-act="closeSheet">Cancel</button></div>
       <label class="field col"><span>Name</span><input name="name" value="${esc(r.name)}" placeholder="e.g. Bolognese" maxlength="80"></label>
+      <div class="field col"><span>Photo (optional)</span>
+        <div class="photo-row">${pic(r, 'lg')}
+          <label class="btn">Choose photo<input type="file" name="photo" accept="image/*" data-chg="photoPick" hidden></label>
+          ${r.photo ? `<button type="button" class="link danger" data-act="photoRemove">Remove</button>` : ''}</div></div>
       <label class="field col"><span>Meal</span><select name="type" class="select">
         <option value="main" ${isMain(r) ? 'selected' : ''}>Lunch & dinner</option>
         <option value="breakfast" ${isMain(r) ? '' : 'selected'}>Breakfast</option></select></label>
@@ -480,7 +528,7 @@ function slotSheet(d, m) {
   const options = S.diet.recipes.filter(x => (m === 'b') === !isMain(x) && x.id !== r?.id).sort((a, b) => a.name.localeCompare(b.name));
   openSheet(`
     <div class="sheet-head"><div><p class="eyebrow">${DAYS[d]} · ${MEALS[m]}${r && day.left?.[m] ? ' · Leftovers' : ''}</p><h2>${r ? esc(r.name) : 'Empty'}</h2></div><button class="link" data-act="closeSheet">Close</button></div>
-    ${r ? `${ingList(r)}
+    ${r ? `${pic(r, 'hero sheet-hero', 'card')}${ingList(r)}
       ${r.steps ? `<p class="steps">${esc(r.steps)}</p>` : ''}
       <div class="row2"><button class="btn primary" data-act="startMove" data-d="${d}" data-m="${m}">Move / swap</button>
       <button class="btn" data-act="setSlot" data-d="${d}" data-m="${m}" data-id="">Remove</button></div>` : ''}
@@ -552,7 +600,32 @@ const A = {
   ingDel: el => el.closest('.ing').remove(),
   recipeDel: el => {
     if (!confirm('Delete this recipe?')) return;
-    closeSheet(); updateDiet({ recipes: { [el.dataset.id]: OP.del } });
+    const id = el.dataset.id;
+    if (recipe(id)?.photo) store.remove(`photos/${id}`);
+    closeSheet(); updateDiet({ recipes: { [id]: OP.del } });
+  },
+  photoRemove: el => {
+    const f = el.closest('form');
+    f.dataset.photo = 'remove'; f.elements.photo.value = '';
+    $('.photo-row .pic img', f)?.remove(); el.remove();
+  },
+  viewSuggested: el => {
+    const r = SUGGESTED_RECIPES.find(s => s.id === el.dataset.id);
+    if (!r) return;
+    openSheet(`
+      <div class="sheet-head"><div><p class="eyebrow">Suggested · ${isMain(r) ? 'Lunch & dinner' : 'Breakfast'}${r.leftovers ? ' · Leftovers' : ''}</p><h2>${esc(r.name)}</h2></div><button class="link" data-act="closeSheet">Close</button></div>
+      ${pic(r, 'hero sheet-hero', 'card')}${ingList(r)}
+      <p class="muted small">Quantities for two people. You can edit them after adding.</p>
+      <button class="btn primary" data-act="addSuggested" data-id="${esc(r.id)}">Add to my recipes</button>`);
+  },
+  addSuggested: el => {
+    const r = SUGGESTED_RECIPES.find(s => s.id === el.dataset.id);
+    closeSheet();
+    if (r && !recipe(r.id)) updateDiet({ recipes: { [r.id]: { ...clone(r), o: Date.now() } } });
+  },
+  addAllSuggested: () => {
+    const now = Date.now(), list = suggestions();
+    if (list.length) updateDiet({ recipes: Object.fromEntries(list.map((r, i) => [r.id, { ...clone(r), o: now + i }])) });
   },
 
   check: el => {
@@ -621,6 +694,20 @@ const C = {
   },
   progEx: el => { S.progEx = el.value; render(true); },
   itemDraft: el => { S.itemDraft = el.value; },
+  // show the chosen photo right away; it is saved with the recipe
+  photoPick: async el => {
+    const f = el.closest('form'), file = el.files?.[0];
+    if (!file || f.dataset.busy === file.name + file.size) return;
+    f.dataset.busy = file.name + file.size;
+    try {
+      const data = await resizeImage(file);
+      f.dataset.photo = data;
+      const tile = $('.photo-row .pic', f);
+      tile.querySelector('img')?.remove();
+      tile.insertAdjacentHTML('beforeend', `<img src="${data}" alt="">`);
+      $('#recipeErr').textContent = '';
+    } catch { $('#recipeErr').textContent = 'That file is not a picture.'; }
+  },
   name: el => { const p = clone(S.profile); p.name = el.value.trim() || S.user.name; saveProfile(p); dirty = true; },
   dayTitle: el => { const p = clone(S.profile); p.program[S.progDay].title = el.value.trim(); saveProfile(p); dirty = true; },
   prog: el => {
@@ -680,7 +767,11 @@ document.addEventListener('submit', async e => {
       : ingredients.some(i => !(i.qty > 0)) ? 'Every ingredient needs a quantity.' : '';
     if (err) { $('#recipeErr').textContent = err; return; }
     const type = f.elements.type.value, id = f.dataset.id || rid();
-    const rec = { id, name, type, ingredients, steps: f.elements.steps.value.trim(), leftovers: type === 'main' && f.elements.leftovers.checked, o: recipe(id)?.o ?? Date.now() };
+    const old = recipe(id), pick = f.dataset.photo || '';
+    let photo = !!old?.photo;
+    if (pick === 'remove') { if (photo) store.remove(`photos/${id}`); photo = false; delete S.photos[id]; }
+    else if (pick) { store.save(`photos/${id}`, { data: pick }); S.photos[id] = pick; photo = true; }
+    const rec = { id, name, type, ingredients, steps: f.elements.steps.value.trim(), leftovers: type === 'main' && f.elements.leftovers.checked, o: old?.o ?? Date.now(), photo };
     closeSheet(); updateDiet({ recipes: { [id]: rec } });
   }
 });
