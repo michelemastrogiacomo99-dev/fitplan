@@ -1,0 +1,25 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Only the two accounts below can read or write anything.
+    // The two User UIDs from Firebase console → Authentication → Users (Michele, Lucy).
+    function member() {
+      return request.auth != null
+        && request.auth.uid in ['C4gGmsTv67SH00S13btM6pGOuTU2', 'jL8MN9fIyuVV6ylCvG6CP9fDRQx2'];
+    }
+    // Each account's own settings, workout plan and logged sets.
+    match /users/{uid} {
+      allow read, write: if member() && request.auth.uid == uid;
+      match /{document=**} {
+        allow read, write: if member() && request.auth.uid == uid;
+      }
+    }
+    // Recipes, week plans and shopping lists are shared between the two.
+    match /shared/{doc} {
+      allow read, write: if member();
+    }
+    match /weeks/{week} {
+      allow read, write: if member();
+    }
+  }
+}
