@@ -5,7 +5,7 @@ import { nutrition, dayTotals, suggestCalories, ACTIVITY, GOAL, LB, IN } from '.
 import { exerciseVideo, youtubeSearch } from './videos.js';
 import {
   DAYS, MEALS, UNITS, iso, fromIso, dow, num, planningWeek, shiftWeek, weekOf, shiftDay,
-  convWeight, entryStats, isMain, coverage, buildPlan, shoppingItems, OP, applyPatch, OUT, blankPlan, needed,
+  convWeight, entryStats, isMain, coverage, buildPlan, shoppingItems, OP, applyPatch, OUT, blankPlan, needed, parseAmount,
 } from './logic.js';
 
 // ---------- helpers ----------
@@ -26,7 +26,7 @@ const S = {
   day: today(), dayWeek: undefined,    // the date open in Meals → Today, and that date's week plan
   showCal: false, calMonth: today().slice(0, 7), foodDraft: { name: '', kcal: '' },
   progEx: null, metric: 'top', extraSets: {}, moving: null, lastSwipe: null, editProgram: false, progDay: dow(),
-  itemDraft: '', error: '', photos: {},
+  itemDraft: '', error: '', photos: {}, importMsg: '',
 };
 let store, unsubs = [], unsubWeek = null, unsubDayWeek = null, dirty = false, lastDay = today(), dietDoc = null, gymMissing = false;
 const photoSubs = new Map(); // recipe id → stop watching its photo
@@ -412,7 +412,8 @@ function viewToday() {
       <input name="kcal" data-chg="foodDraft" data-f="kcal" value="${esc(S.foodDraft.kcal)}" inputmode="numeric" placeholder="kcal" aria-label="Calories" class="kcal-in"><button class="btn primary">Add</button></form></section>`;
   const burned = `<section class="card"><label class="field"><span>Active calories burned<small class="muted">From your watch: Activity → Move</small></span>
     <input data-chg="burned" inputmode="numeric" value="${day.burned || ''}" placeholder="0" aria-label="Active calories burned"></label></section>`;
-  return `${nav}${S.showCal ? calendar() : ''}${daySummary()}${meals}${extras}${burned}`;
+  const msg = S.importMsg ? `<p class="note sticky">${esc(S.importMsg)} <button class="link" data-act="importOk">OK</button></p>` : '';
+  return `${nav}${msg}${S.showCal ? calendar() : ''}${daySummary()}${meals}${extras}${burned}`;
 }
 // the numbers of the open day; also redrawn alone while the "burned" field is being typed in
 function daySummary() {
@@ -720,17 +721,20 @@ function saveBody(patch) { const p = clone(S.profile); p.body = { activity: 'lig
 // A link like …/fitplan/?burned=520 (optionally &date=2026-10-05) writes the day's active calories: this is how
 // an iPhone Shortcut passes them over from the Health app. Runs once, then the numbers leave the address bar.
 function importFromLink() {
-  const q = new URLSearchParams(location.search), burned = parseNum(q.get('burned') ?? '');
+  const q = new URLSearchParams(location.search);
   if (!q.has('burned')) return;
+  const raw = q.get('burned') ?? '', burned = parseAmount(raw);
   const date = /^\d{4}-\d{2}-\d{2}$/.test(q.get('date') || '') && !isNaN(fromIso(q.get('date'))) ? q.get('date') : today();
   q.delete('burned'); q.delete('date');
   history.replaceState(null, '', location.pathname + (q.toString() ? '?' + q : ''));
-  if (burned == null) return;
-  const v = Math.min(9999, Math.round(burned));
-  S.days = applyPatch(S.days, { [date]: { burned: v } });
-  store.update(`users/${S.user.uid}/data/days`, { [date]: { burned: v } });
   S.tab = 'meals'; S.mealsTab = 'today'; S.day = date; S.calMonth = date.slice(0, 7);
   watchDayWeek();
+  // say what arrived, so a Shortcut that sends nothing (or text) is easy to spot
+  if (burned == null) { S.importMsg = `The Health link arrived without a number${raw ? ` (it said “${raw.slice(0, 40)}”)` : ' (nothing after “burned=”)'}. Nothing was changed.`; return; }
+  const v = Math.min(9999, burned);
+  S.days = applyPatch(S.days, { [date]: { burned: v } });
+  store.update(`users/${S.user.uid}/data/days`, { [date]: { burned: v } });
+  S.importMsg = `Got ${v.toLocaleString('en-US')} active calories from Health for ${shortDate(fromIso(date))}.`;
 }
 function openDay(day, keepCal) {
   S.day = day; S.calMonth = day.slice(0, 7); S.showCal = !!keepCal; S.foodDraft = { name: '', kcal: '' };
@@ -795,6 +799,7 @@ const A = {
       </form>`);
     $('#outForm input')?.focus();
   },
+  importOk: () => { S.importMsg = ''; render(true); },
   ateOutDel: el => { closeSheet(); updateDay({ m: { [el.dataset.m]: OP.del } }); },
 
   // body details → suggested calories

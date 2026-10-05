@@ -60,6 +60,19 @@ export function applyPatch(doc, patch) {
   return out;
 }
 
+// A whole number of calories out of whatever another app hands over: "523", "523.6", "523,6 kcal",
+// "1,234", "1.234,5", "1 234". null when there is no number in it.
+export function parseAmount(raw) {
+  let s = String(raw ?? '').replace(/[^\d.,]/g, '');
+  if (!/\d/.test(s)) return null;
+  if (/^\d{1,3}([.,]\d{3})+([.,]\d{1,2})?$/.test(s)) {        // grouped thousands, optional decimals
+    const dec = s.match(/[.,]\d{1,2}$/);
+    s = (dec ? s.slice(0, dec.index) : s).replace(/[.,]/g, '') + (dec ? '.' + dec[0].slice(1) : '');
+  } else s = s.replace(',', '.');
+  const n = parseFloat(s);
+  return Number.isFinite(n) && n >= 0 ? Math.round(n) : null;
+}
+
 export const isMain = r => r.type !== 'breakfast';
 
 // A meal eaten away from home: it sits in the week plan like a recipe, but nothing is bought or cooked for it.

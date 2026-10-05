@@ -222,6 +222,10 @@ for (let t = 0; t < 3000; t++) {
     ok(q.every((d, i) => !d.left.l || (i > 0 && q[i - 1].d === d.l && d.l !== L.OUT)), `random outs #${t}: leftovers follow their dinner`);
   }
 }
+// ---- numbers handed over by the Health shortcut ----
+eq(['523', '523.6', '523,6', '523 kcal', '523,6 kcal', '1,234', '1.234', '1 234', '1.234,5', '1,234.56', '12,345', '0', '87.4 Cal', ' 640 '].map(L.parseAmount),
+  [523, 524, 524, 523, 524, 1234, 1234, 1234, 1235, 1235, 12345, 0, 87, 640], 'calories in any usual spelling');
+eq(['', 'kcal', 'abc', null, undefined, 'Rounded Number', '-'].map(L.parseAmount), [null, null, null, null, null, null, null], 'no number → nothing');
 // ---- suggested calories ----
 {
   const man = { sex: 'm', age: 30, heightCm: 180, weightKg: 80, activity: 'moderate', goal: 'keep' };
