@@ -228,6 +228,33 @@ a.btn { display: flex; align-items: center; justify-content: center; text-decora
 .field.col > select { text-align: left; }
 .meal > .link { flex: none; padding: 10px 0 10px 8px; }
 
+/* warnings, workout, calorie history */
+.tag.warn { color: var(--danger); background: color-mix(in srgb, var(--danger) 14%, transparent); }
+.note.warn { color: var(--ink); background: color-mix(in srgb, var(--danger) 12%, transparent); }
+.card.wk { flex-direction: row; align-items: center; justify-content: space-between; gap: 12px; }
+.card.wk .btn { width: auto; flex: none; }
+.card.wk.done { background: var(--soft); border-color: transparent; }
+.card.wk .link { flex: none; min-height: 44px; padding: 0 4px; }
+.pair .unit { align-self: center; }
+.check input[type=radio] { border-radius: 50%; }
+.field > strong { font-variant-numeric: tabular-nums; }
+.chart .grid.zero { stroke: var(--muted); }
+.chart .bar-r { fill: var(--accent); }
+.chart .bar-r.neg { fill: var(--danger); }
+.chart .bar-r.mark { fill: var(--ink); }
+.hist.four, .hist.head { display: grid; grid-template-columns: 1.3fr 1fr 1fr 1fr; width: 100%; text-align: right; align-items: center; min-height: 40px; }
+.hist.four span, .hist.head span { text-align: right; color: var(--ink); }
+.hist.four span:first-child, .hist.head span:first-child { text-align: left; color: var(--muted); }
+.hist.head { border-top: 0; min-height: 0; font-size: 12px; }
+.hist.head span { color: var(--muted); }
+.hist.four .muted { color: var(--muted); }
+.hist.four .up { color: var(--accent); }
+.hist.four .down { color: var(--danger); }
+.day h2 .tag { vertical-align: middle; }
+.slot { min-width: 0; }
+.slot-v { min-width: 0; overflow-wrap: anywhere; }
+.slot .tag { margin-left: -4px; }
+
 /* shopping */
 .list { gap: 0; padding: 4px 14px; }
 .shop { display: flex; align-items: center; gap: 12px; width: 100%; min-height: 48px; text-align: left; border-top: 1px solid var(--line); }

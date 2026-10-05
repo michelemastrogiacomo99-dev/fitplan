@@ -1,7 +1,10 @@
 import { initStore } from './store.js';
 import { DEFAULT_PROGRAM, DEFAULT_RECIPES, SUGGESTED_RECIPES } from './seed.js';
 import { builtinPhoto } from './images.js';
-import { nutrition, dayTotals, suggestCalories, ACTIVITY, GOAL, LB, IN } from './nutrition.js';
+import {
+  nutrition, dayTotals, suggestCalories, ACTIVITY, GOAL, LB, IN,
+  mealFlag, topSources, INTENSITY, workoutKcal, calorieHistory, parseWeight, weightSeries,
+} from './nutrition.js';
 import { exerciseVideo, youtubeSearch } from './videos.js';
 import {
   DAYS, MEALS, UNITS, iso, fromIso, dow, num, planningWeek, shiftWeek, weekOf, shiftDay,
@@ -25,6 +28,7 @@ const S = {
   days: null,                          // this account's food diary, by date
   day: today(), dayWeek: undefined,    // the date open in Meals → Today, and that date's week plan
   showCal: false, calMonth: today().slice(0, 7), foodDraft: { name: '', kcal: '' },
+  progTab: 'strength', histDays: 14,
   progEx: null, metric: 'top', extraSets: {}, moving: null, lastSwipe: null, editProgram: false, progDay: dow(),
   itemDraft: '', error: '', photos: {}, importMsg: '',
 };
@@ -97,7 +101,7 @@ function subscribe() {
   unsubs.push(store.watch(`users/${uid}`, (d, cached, pending) => {
     if (pending && S.profile) return;
     if (!d) { if (!cached) store.save(`users/${uid}`, { name: S.user.name, unit: 'lb', shopUnits: 'metric', kcalTarget: 2000 }); return; }
-    S.profile = d; seedGym(); render();
+    S.profile = d; seedGym(); importFromLink(); render();
   }, failed));
   unsubs.push(store.watch('shared/gym', (d, cached, pending) => {
     if (pending && S.program) return;
@@ -162,7 +166,7 @@ function unsubscribe() {
   photoSubs.forEach(stop => stop()); photoSubs.clear(); S.photos = {};
   S.profile = S.logs = S.diet = dietDoc = null; S.week = undefined; S.itemDraft = S.error = '';
   S.moving = S.lastSwipe = S.progEx = null; S.extraSets = {}; S.editProgram = false;
-  S.tab = 'gym'; S.mealsTab = 'today'; S.metric = 'top'; S.gymDay = S.progDay = dow(); S.weekId = planningWeek();
+  S.tab = 'gym'; S.mealsTab = 'today'; S.metric = 'top'; S.progTab = 'strength'; S.histDays = 14; S.importMsg = ''; S.gymDay = S.progDay = dow(); S.weekId = planningWeek();
 }
 
 // ---------- rendering ----------
@@ -241,7 +245,19 @@ function viewGym() {
     <header><p class="eyebrow">Hi ${esc(S.profile.name)}</p><h1>${esc(DAYS[S.gymDay])} · ${esc(day.title || 'Workout')}</h1></header>
     <div class="chips">${DAYS.map((n, i) => `<button class="chip ${i === S.gymDay ? 'on' : ''} ${i === dow() ? 'today' : ''}" data-act="gymDay" data-i="${i}">${n.slice(0, 3)}</button>`).join('')}</div>
     ${S.gymDay !== dow() && day.exercises.length ? `<p class="note">Sets you enter are logged with today's date.</p>` : ''}
+    ${workoutCard()}
     ${day.exercises.length ? day.exercises.map(exCard).join('') : `<div class="empty"><h2>Rest day</h2><p class="muted">Nothing scheduled. Recover well.</p></div>`}`;
+}
+
+// "I trained today": confirmed once a day, whatever day of the plan was done. Its calories are added to the
+// day only when the watch did not record the session.
+function workoutCard() {
+  const w = S.days[today()]?.w;
+  if (!w) return `<section class="card wk"><div><h2>Did you train today?</h2><p class="muted small">Confirm it to count the workout in today's calories.</p></div>
+    <button class="btn primary" data-act="workoutForm">I trained today</button></section>`;
+  return `<section class="card wk done"><div><h2>Workout done today</h2>
+    <p class="muted small">${w.min} min · ${w.tracked ? 'counted by your watch' : `about ${fmtK(w.kcal)} kcal added to today`}</p></div>
+    <button class="link" data-act="workoutForm">Edit</button></section>`;
 }
 
 function exCard(ex) {
@@ -287,14 +303,18 @@ function allExercises() {
 }
 
 function viewProgress() {
+  const head = `<header><h1>Progress</h1></header>
+    <div class="seg">${[['strength', 'Strength'], ['calories', 'Calories'], ['weight', 'Weight']].map(([k, l]) => `<button class="${S.progTab === k ? 'on' : ''}" data-act="progTab" data-t="${k}">${l}</button>`).join('')}</div>`;
+  if (S.progTab === 'calories') return head + viewCalories();
+  if (S.progTab === 'weight') return head + viewWeight();
   const exs = allExercises(), u = unit();
-  if (!exs.length) return `<header><h1>Progress</h1></header><div class="empty"><p class="muted">No exercises in your plan yet.</p></div>`;
+  if (!exs.length) return `${head}<div class="empty"><p class="muted">No exercises in your plan yet.</p></div>`;
   if (!exs.some(e => e.id === S.progEx)) S.progEx = (exs.find(e => (S.logs[e.id] || []).length) || exs[0]).id;
   const entries = (S.logs[S.progEx] || []).map(e => ({ e, s: entryStats(e, u) })).filter(x => x.s.sets.length);
   const metrics = { top: ['Top weight', u], reps: ['Total reps', 'reps'], vol: ['Volume', u] };
   const pts = entries.map(x => ({ d: x.e.d, v: x.s[S.metric] }));
   return `
-    <header><h1>Progress</h1></header>
+    ${head}
     <select class="select" data-chg="progEx" aria-label="Exercise">${exs.map(e => `<option value="${esc(e.id)}" ${e.id === S.progEx ? 'selected' : ''}>${esc(e.day)} · ${esc(e.name || 'Exercise')}</option>`).join('')}</select>
     <div class="seg">${Object.entries(metrics).map(([k, [label]]) => `<button class="${S.metric === k ? 'on' : ''}" data-act="metric" data-m="${k}">${label}</button>`).join('')}</div>
     <section class="card">
@@ -302,6 +322,91 @@ function viewProgress() {
     </section>
     ${entries.length ? `<section class="card"><h2>History</h2>${[...entries].reverse().map(x => `
       <div class="hist"><span>${shortDate(fromIso(x.e.d))}</span><span>${esc(setsText(x.e, u))}</span></div>`).join('')}</section>` : ''}`;
+}
+
+// ---------- calories over time ----------
+// what the body burns in a day before exercise counted apart: from "About you" if filled in, else the target
+const maintenance = () => suggestCalories(S.profile.body)?.maintain || kcalTarget();
+
+function viewCalories() {
+  const body = suggestCalories(S.profile.body), base = maintenance();
+  const h = calorieHistory(S.days, base, S.histDays, today());
+  const perWeek = h.logged ? h.avg * 7 / 7700 : 0, lb = unit() === 'lb';
+  const range = `<div class="seg">${[7, 14, 30, 90].map(n => `<button class="${S.histDays === n ? 'on' : ''}" data-act="histDays" data-n="${n}">${n} days</button>`).join('')}</div>`;
+  const list = h.rows.filter(r => r.eaten || r.burned).reverse();
+  return `${range}
+    <section class="card">
+      <div class="kcal-head"><div><strong class="${h.avg < 0 ? 'down' : ''}">${h.logged ? fmtK(Math.abs(h.avg)) : '–'}</strong><span>kcal a day ${h.avg < 0 ? 'surplus' : 'deficit'}</span></div>
+        <p class="muted small">${h.logged} day${h.logged === 1 ? '' : 's'} with food logged</p></div>
+      ${h.logged ? bars(h.rows.map(r => ({ d: r.d, v: r.deficit })), true) : `<p class="muted center pad">Tick your meals in Meals → Day and the deficit shows here.</p>`}
+      ${h.logged ? `<p class="muted small">Green = you ate less than you burned, red = more. In total ${fmtK(Math.abs(h.total))} kcal ${h.total < 0 ? 'over' : 'under'}${Math.abs(perWeek) >= 0.05 ? `, about ${num(Math.round(Math.abs(perWeek) * (lb ? LB : 1) * 10) / 10)} ${lb ? 'lb' : 'kg'} a week ${h.avg < 0 ? 'gained' : 'lost'} at this pace` : ''}.</p>` : ''}
+      <p class="muted small">Counted against ${fmtK(base)} kcal a day ${body ? '(your maintenance from Settings → About you)' : '(your target: fill in About you in Settings for a better number)'} plus the active calories of each day. Days without food logged are left out.</p>
+    </section>
+    <section class="card">
+      <div class="kcal-head"><div><strong>${fmtK(h.burnedTotal)}</strong><span>active kcal burned</span></div>
+        <p class="muted small">${h.workouts} workout${h.workouts === 1 ? '' : 's'} confirmed</p></div>
+      ${h.burnedTotal ? bars(h.rows.map(r => ({ d: r.d, v: r.burned || null, mark: r.workout }))) : `<p class="muted center pad">No active calories yet: confirm a workout or enter them in Meals → Day.</p>`}
+      ${h.burnedTotal ? `<p class="muted small">Watch calories plus the estimate of workouts the watch did not record. Dark bars = days with a confirmed workout.</p>` : ''}
+    </section>
+    ${list.length ? `<section class="card"><h2>Day by day</h2>
+      <div class="hist head"><span>Day</span><span>Eaten</span><span>Burned</span><span>Deficit</span></div>
+      ${list.map(r => `<button class="hist four" data-act="openDiary" data-d="${r.d}"><span>${shortDate(fromIso(r.d))}${r.workout ? ' ●' : ''}</span><span>${r.eaten ? fmtK(r.eaten) : '–'}</span><span>${r.burned ? fmtK(r.burned) : '–'}</span>
+        <span class="${r.deficit == null ? 'muted' : r.deficit < 0 ? 'down' : 'up'}">${r.deficit == null ? '–' : (r.deficit < 0 ? '+' : '−') + fmtK(Math.abs(r.deficit))}</span></button>`).join('')}
+      <p class="muted small">● = workout confirmed. −500 means 500 kcal under what you burned.</p></section>` : ''}`;
+}
+
+// ---------- body weight over time ----------
+const showKg = kg => Math.round((unit() === 'lb' ? kg * LB : kg) * 10) / 10;
+function viewWeight() {
+  const u = unit(), all = weightSeries(S.days), last = all[all.length - 1], first = all[0];
+  const month = all.filter(p => p.d >= shiftDay(today(), -30)), m0 = month[0];
+  const delta = (a, b) => { const v = Math.round((showKg(b.kg) - showKg(a.kg)) * 10) / 10; return `${v > 0 ? '+' : v < 0 ? '−' : ''}${num(Math.abs(v))} ${u}`; };
+  const todays = all.find(p => p.d === today());
+  return `
+    ${S.importMsg ? `<p class="note sticky">${esc(S.importMsg)} <button class="link" data-act="importOk">OK</button></p>` : ''}
+    <section class="card">
+      <form id="weighIn" class="additem"><input name="w" inputmode="decimal" value="${todays ? num(showKg(todays.kg)) : ''}" placeholder="Today's weight in ${u}" aria-label="Today's weight in ${u}" autocomplete="off">
+        <button class="btn primary">${todays ? 'Update' : 'Save'}</button></form>
+      <p class="error" id="weighErr"></p>
+      <p class="muted small">Weigh yourself at the same time of day, ideally in the morning. Saving also updates your weight in Settings → About you.</p>
+    </section>
+    ${all.length ? `<section class="card">
+      ${chart(all.map(p => ({ d: p.d, v: showKg(p.kg) })), u)}
+      ${all.length > 1 ? `<div class="macros"><div><b>${num(showKg(last.kg))} ${u}</b><span>Now</span></div>
+        <div><b>${month.length > 1 ? delta(m0, last) : '–'}</b><span>Last 30 days</span></div>
+        <div><b>${delta(first, last)}</b><span>Since ${shortDate(fromIso(first.d))}</span></div></div>` : `<p class="muted small">One more weigh-in and the trend shows here.</p>`}
+    </section>
+    <section class="card"><h2>Weigh-ins</h2>${[...all].reverse().map(p => `
+      <div class="slot"><span class="slot-v">${fromIso(p.d).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}</span><span class="muted">${num(showKg(p.kg))} ${u}</span>
+      <button class="link danger" data-act="weighDel" data-d="${p.d}" aria-label="Remove the weigh-in of ${p.d}">✕</button></div>`).join('')}</section>`
+    : `<div class="empty"><h2>No weigh-ins yet</h2><p class="muted">Save today's weight above and your trend starts here.</p></div>`}`;
+}
+// one weigh-in: written in the diary of that day, and kept as the current weight for the calorie suggestion
+function saveWeight(kg, date = today()) {
+  S.days = applyPatch(S.days, { [date]: { kg } });
+  store.update(`users/${S.user.uid}/data/days`, { [date]: { kg } });
+  const latest = weightSeries(S.days).pop();
+  if (latest?.d === date) saveBody({ weightKg: kg });
+}
+
+// Bars for one value a day; null = nothing that day. signed: bars go up (good, green) or down (red) from zero.
+function bars(pts, signed = false) {
+  const W = 320, H = 150, L = 40, R = 6, T = 10, B = 22;
+  const vs = pts.map(p => p.v).filter(v => v != null);
+  let hi = Math.max(0, ...vs), lo = signed ? Math.min(0, ...vs) : 0;
+  if (hi === lo) hi = lo + 1;
+  const y = v => T + (hi - v) * (H - T - B) / (hi - lo), step = (W - L - R) / pts.length, bw = Math.max(1.5, Math.min(18, step * 0.7));
+  const ticks = [...new Set([hi, 0, lo])];
+  return `<svg class="chart" viewBox="0 0 ${W} ${H}" role="img" aria-label="Chart of the last ${pts.length} days">
+    ${ticks.map(v => `<line x1="${L}" x2="${W - R}" y1="${y(v).toFixed(1)}" y2="${y(v).toFixed(1)}" class="grid ${v === 0 ? 'zero' : ''}"/><text x="${L - 6}" y="${(y(v) + 3.5).toFixed(1)}" text-anchor="end">${fmtK(v)}</text>`).join('')}
+    ${pts.map((p, i) => {
+      if (p.v == null) return '';
+      const x = L + i * step + (step - bw) / 2, top = Math.min(y(p.v), y(0)), h = Math.max(1.5, Math.abs(y(p.v) - y(0)));
+      return `<rect x="${x.toFixed(1)}" y="${top.toFixed(1)}" width="${bw.toFixed(1)}" height="${h.toFixed(1)}" rx="${Math.min(3, bw / 2)}" class="bar-r ${signed && p.v < 0 ? 'neg' : ''} ${p.mark ? 'mark' : ''}"/>`;
+    }).join('')}
+    <text x="${L}" y="${H - 6}">${shortDate(fromIso(pts[0].d))}</text>
+    <text x="${W - R}" y="${H - 6}" text-anchor="end">${shortDate(fromIso(pts[pts.length - 1].d))}</text>
+  </svg>`;
 }
 
 function chart(pts, label) {
@@ -338,6 +443,15 @@ function weekNav() {
 const ingList = r => `<ul class="ings">${r.ingredients.map(i => `<li><span>${esc(i.name)}</span><span class="muted">${esc(num(i.qty))} ${esc(i.unit)}</span></li>`).join('')}</ul>`;
 
 // "520 kcal · P 38 · C 55 · F 14" for one person; "≈" when some ingredient could not be counted
+// A meal that is out of proportion for the person looking at it (it depends on that account's daily target).
+const flagOf = (kcal, isBreakfast) => mealFlag(kcal, isBreakfast, kcalTarget());
+const warnTag = (r, short) => { const f = r && flagOf(nutrition(r)?.kcal, !isMain(r)); return f ? `<span class="tag warn" title="${f.share}% of your daily target in one meal">⚠ ${f.share}%${short ? '' : ' of a day'}</span>` : ''; };
+const warnLine = (r) => {
+  const n = r && nutrition(r), f = n && flagOf(n.kcal, !isMain(r));
+  if (!f) return '';
+  const top = n.manual ? [] : topSources(r);
+  return `<p class="note warn">⚠ ${fmtK(n.kcal)} kcal is ${f.share}% of your daily target in one meal.${top.length ? ` Most of it: ${top.map(t => `${esc(t.name)} (${t.kcal})`).join(', ')}.` : ''} Check the quantities.</p>`;
+};
 function nutriLine(r, full = true) {
   const n = nutrition(r);
   if (!n || !n.kcal) return '';
@@ -385,7 +499,11 @@ function viewToday() {
   const plan = S.dayWeek === undefined ? null : S.dayWeek?.plan?.[dow(date)];
   const rows = Object.keys(MEALS).map(m => {
     const done = day.m?.[m], planned = plan?.[m], r = recipe(planned);
-    const kline = n => n?.kcal ? `${n.kcal} kcal · P ${n.p || 0} · C ${n.c || 0} · F ${n.f || 0}` : 'No calories set';
+    const kline = n => {
+      if (!n?.kcal) return 'No calories set';
+      const f = flagOf(n.kcal, m === 'b');
+      return `${n.kcal} kcal · P ${n.p || 0} · C ${n.c || 0} · F ${n.f || 0}${f ? `</span><span class="small down">⚠ ${f.share}% of your daily target in one meal` : ''}`;
+    };
     // eaten out, or something else than planned: each account writes what it had
     if (done ? done.id === OUT : planned === OUT || !r) {
       const label = planned === OUT ? 'Eating out' : done ? 'Something else' : 'Nothing planned';
@@ -395,9 +513,10 @@ function viewToday() {
           <span class="muted small">${done ? kline(done) : 'Tap to write it down'}</span></div></div>`;
     }
     // what was ticked stays as it was eaten, even if the plan or the recipe changes later
-    const name = done ? done.name : r.name, n = done || nutrition(r);
+    // (the dish that was ticked may no longer be the planned one, or the plan may be gone: r can be missing)
+    const name = done ? done.name : r.name, n = done || nutrition(r), shown = done ? recipe(done.id) : r;
     return `<div class="meal ${done ? 'done' : ''}" role="button" tabindex="0" data-act="eat" data-m="${m}" aria-pressed="${!!done}">
-      <span class="tick"></span>${!done || done.id === r.id ? pic(r, 'md') : `<span class="pic md">${esc(name[0])}</span>`}
+      <span class="tick"></span>${shown ? pic(shown, 'md') : `<span class="pic md">${esc(String(name || '?')[0])}</span>`}
       <div class="meal-t"><span class="eyebrow">${MEALS[m]}</span><span class="meal-n">${esc(name)}</span>
         <span class="muted small">${kline(n)}</span></div>
       ${done ? '' : `<button class="link" data-act="ateOut" data-m="${m}" aria-label="I had something else for ${MEALS[m]}">Other</button>`}</div>`;
@@ -410,8 +529,11 @@ function viewToday() {
       <button class="link danger" data-act="foodDel" data-id="${esc(x.id)}" aria-label="Remove ${esc(x.name)}">✕</button></div>`).join('')}
     <form id="addFood" class="additem"><input name="name" data-chg="foodDraft" data-f="name" value="${esc(S.foodDraft.name)}" placeholder="Snack, drink…" maxlength="40" aria-label="Food" autocomplete="off">
       <input name="kcal" data-chg="foodDraft" data-f="kcal" value="${esc(S.foodDraft.kcal)}" inputmode="numeric" placeholder="kcal" aria-label="Calories" class="kcal-in"><button class="btn primary">Add</button></form></section>`;
+  const w = day.w;
   const burned = `<section class="card"><label class="field"><span>Active calories burned<small class="muted">From your watch: Activity → Move</small></span>
-    <input data-chg="burned" inputmode="numeric" value="${day.burned || ''}" placeholder="0" aria-label="Active calories burned"></label></section>`;
+    <input data-chg="burned" inputmode="numeric" value="${day.burned || ''}" placeholder="0" aria-label="Active calories burned"></label>
+    ${w ? `<div class="field"><span>Workout · ${w.min} min<small class="muted">${w.tracked ? 'Already in the watch calories above' : 'Estimate, added to the watch calories'}</small></span>
+      <strong>${w.tracked ? '✓' : '+' + fmtK(w.kcal)}</strong></div>` : ''}</section>`;
   const msg = S.importMsg ? `<p class="note sticky">${esc(S.importMsg)} <button class="link" data-act="importOk">OK</button></p>` : '';
   return `${nav}${msg}${S.showCal ? calendar() : ''}${daySummary()}${meals}${extras}${burned}`;
 }
@@ -438,13 +560,14 @@ function viewPlan() {
     ${plan.map((day, d) => {
       const date = new Date(start); date.setDate(date.getDate() + d);
       const kcal = Object.keys(MEALS).reduce((a, m) => a + (nutrition(recipe(day[m]))?.kcal || 0), 0);
-      return `<section class="card day"><h2>${DAYS[d]} <span class="muted">${shortDate(date)}${kcal ? ` · ${fmtK(kcal)} kcal` : ''}</span></h2>
+      const heavy = kcal > kcalTarget() * 1.15;
+      return `<section class="card day"><h2>${DAYS[d]} <span class="muted">${shortDate(date)}${kcal ? ` · ${fmtK(kcal)} kcal` : ''}</span>${heavy ? ` <span class="tag warn">⚠ over your ${fmtK(kcalTarget())}</span>` : ''}</h2>
         ${Object.keys(MEALS).map(m => {
           const r = recipe(day[m]), out = day[m] === OUT;
           const moving = S.moving && S.moving.d === d && S.moving.m === m;
           return `<button class="slot ${moving ? 'moving' : ''}" data-act="slot" data-d="${d}" data-m="${m}">
             <span class="slot-k">${MEALS[m]}</span>${r ? pic(r, 'sm') : out ? '<span class="pic sm">↗</span>' : ''}<span class="slot-v ${r || out ? '' : 'muted'}">${r ? esc(r.name) : out ? 'Eating out' : 'Empty'}</span>
-            ${r && day.left?.[m] ? '<span class="tag">Leftovers</span>' : ''}</button>`;
+            ${warnTag(r, true)}${r && day.left?.[m] ? '<span class="tag">Leftovers</span>' : ''}</button>`;
         }).join('')}</section>`;
     }).join('')}`;
 }
@@ -476,7 +599,7 @@ function viewPick() {
         <span class="stamp yes">YES</span><span class="stamp no">NOPE</span>
         <div class="swipe-body">
           <h2>${esc(r.name)}</h2>
-          ${nutriLine(r) ? `<p class="nutri">${nutriLine(r)} <span class="muted">per person</span></p>` : ''}
+          ${nutriLine(r) ? `<p class="nutri">${nutriLine(r)} <span class="muted">per person</span> ${warnTag(r)}</p>` : ''}
           ${r.leftovers ? '<p><span class="tag">Leftovers · covers 2 meals</span></p>' : ''}
           ${ingList(r)}
           ${r.steps ? `<p class="muted steps">${esc(r.steps)}</p>` : ''}
@@ -494,7 +617,7 @@ function viewPick() {
 function viewRecipes() {
   const group = (title, list) => list.length ? `<section class="card"><h2>${title}</h2>${list.map(r => `
     <button class="slot" data-act="editRecipe" data-id="${esc(r.id)}">${pic(r, 'md')}<span class="slot-v">${esc(r.name)}</span>
-    ${r.leftovers && isMain(r) ? '<span class="tag">Leftovers</span>' : ''}<span class="muted">${nutriLine(r, false) || `${r.ingredients.length} ingr.`}</span></button>`).join('')}</section>` : '';
+    ${warnTag(r)}${r.leftovers && isMain(r) ? '<span class="tag">Leftovers</span>' : ''}<span class="muted">${nutriLine(r, false) || `${r.ingredients.length} ingr.`}</span></button>`).join('')}</section>` : '';
   const sorted = [...S.diet.recipes].sort((a, b) => a.name.localeCompare(b.name));
   const ideas = suggestions();
   return `<button class="btn primary" data-act="newRecipe">+ New recipe</button>
@@ -693,6 +816,7 @@ function recipeSheet(r) {
         <span>Makes leftovers<small>Dinner one day, lunch the next. The shopping list buys double.</small></span></label>
       <div class="field col"><span>Calories and macros per person (optional)</span>
         <div class="nutri-row">${nf('kcal', 'kcal')}${nf('p', 'Protein g')}${nf('c', 'Carbs g')}${nf('f', 'Fat g')}</div>
+        ${isNew ? '' : warnLine(r)}
         <small class="muted">Leave empty and the app estimates them from the ingredients${isNew ? '' : est.kcal ? ` (now ${est.complete ? '' : '≈ '}${est.kcal} kcal)` : ''}.${est.missing.length ? ` Not counted: ${esc(est.missing.join(', '))}.` : ''}</small></div>
       <label class="field col"><span>How to make it (optional)</span><textarea name="steps" rows="4" maxlength="4000">${esc(r.steps)}</textarea></label>
       <p class="error" id="recipeErr"></p>
@@ -708,7 +832,7 @@ function slotSheet(d, m) {
       <button class="btn" data-act="setSlot" data-d="${d}" data-m="${m}" data-id="">Remove</button></div>`;
   openSheet(`
     <div class="sheet-head"><div><p class="eyebrow">${DAYS[d]} · ${MEALS[m]}${r && day.left?.[m] ? ' · Leftovers' : ''}</p><h2>${r ? esc(r.name) : out ? 'Eating out' : 'Empty'}</h2></div><button class="link" data-act="closeSheet">Close</button></div>
-    ${r ? `${pic(r, 'hero sheet-hero', 'card')}${nutriLine(r) ? `<p class="nutri">${nutriLine(r)} <span class="muted">per person</span></p>` : ''}${ingList(r)}
+    ${r ? `${pic(r, 'hero sheet-hero', 'card')}${nutriLine(r) ? `<p class="nutri">${nutriLine(r)} <span class="muted">per person</span></p>` : ''}${warnLine(r)}${ingList(r)}
       ${r.steps ? `<p class="steps">${esc(r.steps)}</p>` : ''}${actions}` : ''}
     ${out ? `<p class="muted">Nothing is cooked or bought for this meal. Each of you writes what you had in Meals → Day.</p>${actions}`
       : `<button class="btn" data-act="setSlot" data-d="${d}" data-m="${m}" data-id="${OUT}">↗ Eating out</button>`}
@@ -717,16 +841,25 @@ function slotSheet(d, m) {
 }
 
 // ---------- actions ----------
+const estimateText = (min, level) => `About ${fmtK(workoutKcal(min, S.profile.body?.weightKg, level))} active kcal for ${Math.round(Number(min) || 0)} min.`;
 function saveBody(patch) { const p = clone(S.profile); p.body = { activity: 'light', goal: 'keep', ...(p.body || {}), ...patch }; saveProfile(p); }
 // A link like …/fitplan/?burned=520 (optionally &date=2026-10-05) writes the day's active calories: this is how
 // an iPhone Shortcut passes them over from the Health app. Runs once, then the numbers leave the address bar.
+// …/fitplan/?weight=176.4 (the unit may follow, as in "176.4 lb" or "80 kg") saves a weigh-in the same way.
 function importFromLink() {
   const q = new URLSearchParams(location.search);
-  if (!q.has('burned')) return;
+  if (!(q.has('burned') || q.has('weight')) || !S.days || !S.profile) return;
+  const hadWeight = q.has('weight'), hadBurned = q.has('burned'), rawW = q.get('weight') ?? '';
   const raw = q.get('burned') ?? '', burned = parseAmount(raw);
   const date = /^\d{4}-\d{2}-\d{2}$/.test(q.get('date') || '') && !isNaN(fromIso(q.get('date'))) ? q.get('date') : today();
-  q.delete('burned'); q.delete('date');
+  q.delete('burned'); q.delete('date'); q.delete('weight');
   history.replaceState(null, '', location.pathname + (q.toString() ? '?' + q : ''));
+  if (hadWeight) {
+    const kg = parseWeight(rawW, unit());
+    if (kg == null) S.importMsg = `The Health link arrived without a weight${rawW ? ` (it said “${rawW.slice(0, 40)}”)` : ' (nothing after “weight=”)'}. Nothing was changed.`;
+    else { saveWeight(kg, date); S.importMsg = `Got your weight from Health: ${num(showKg(kg))} ${unit()} for ${shortDate(fromIso(date))}.`; }
+    if (!hadBurned) { S.tab = 'progress'; S.progTab = 'weight'; return; }
+  }
   S.tab = 'meals'; S.mealsTab = 'today'; S.day = date; S.calMonth = date.slice(0, 7);
   watchDayWeek();
   // say what arrived, so a Shortcut that sends nothing (or text) is easy to spot
@@ -810,6 +943,39 @@ const A = {
     const p = clone(S.profile); p.kcalTarget = s.target; saveProfile(p); render(true);
   },
   metric: el => { S.metric = el.dataset.m; render(true); },
+  progTab: el => { S.progTab = el.dataset.t; render(true); },
+  histDays: el => { S.histDays = +el.dataset.n; render(true); },
+  weighDel: el => {
+    const d = el.dataset.d;
+    S.days = applyPatch(S.days, { [d]: { kg: OP.del } });
+    store.update(`users/${S.user.uid}/data/days`, { [d]: { kg: OP.del } });
+    render(true);
+  },
+  openDiary: el => { S.mealsTab = 'today'; S.tab = 'meals'; openDay(el.dataset.d, false); $('main').scrollTop = 0; },
+  // confirm today's workout; its calories are added only if the watch did not record it
+  workoutForm: () => {
+    const day = S.days[today()] || {}, w = day.w, kg = S.profile.body?.weightKg;
+    const min = w?.min || 60, level = w?.level || 'moderate', tracked = w ? !!w.tracked : (day.burned || 0) > 0;
+    openSheet(`
+      <form id="workoutForm" novalidate>
+        <div class="sheet-head"><div><p class="eyebrow">${fromIso(today()).toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' })}</p><h2>Today's workout</h2></div>
+          <button type="button" class="link" data-act="closeSheet">Cancel</button></div>
+        <label class="field"><span>How long?</span><div class="pair"><input name="min" inputmode="numeric" value="${min}" aria-label="Minutes"><span class="muted unit">min</span></div></label>
+        <label class="field col"><span>How hard?</span><select name="level" class="select">${Object.entries(INTENSITY).map(([k, [, l]]) => `<option value="${k}" ${k === level ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
+        <div class="field col"><span>Did your Apple Watch record this workout?</span>
+          <label class="check"><input type="radio" name="tracked" value="1" ${tracked ? 'checked' : ''}><span>Yes<small>Its calories are already in the watch total: nothing is added.</small></span></label>
+          <label class="check"><input type="radio" name="tracked" value="0" ${tracked ? '' : 'checked'}><span>No, add an estimate<small id="wkEst">${estimateText(min, level)}</small></span></label></div>
+        ${kg ? '' : `<p class="note">Your weight is not set, so the estimate uses 75 kg. Set it in Settings → About you.</p>`}
+        <button class="btn primary">${w ? 'Save' : 'Confirm workout'}</button>
+        ${w ? `<button type="button" class="btn danger" data-act="workoutDel">I did not train today</button>` : ''}
+      </form>`);
+  },
+  workoutDel: () => {
+    closeSheet();
+    S.days = applyPatch(S.days, { [today()]: { w: OP.del } });
+    store.update(`users/${S.user.uid}/data/days`, { [today()]: { w: OP.del } });
+    render(true);
+  },
 
   mealsTab: el => { S.mealsTab = el.dataset.t; S.moving = null; render(true); },
   goPick: () => { S.mealsTab = 'pick'; go('meals'); },
@@ -874,7 +1040,7 @@ const A = {
     if (!r) return;
     openSheet(`
       <div class="sheet-head"><div><p class="eyebrow">Suggested · ${isMain(r) ? 'Lunch & dinner' : 'Breakfast'}${r.leftovers ? ' · Leftovers' : ''}</p><h2>${esc(r.name)}</h2></div><button class="link" data-act="closeSheet">Close</button></div>
-      ${pic(r, 'hero sheet-hero', 'card')}${nutriLine(r) ? `<p class="nutri">${nutriLine(r)} <span class="muted">per person</span></p>` : ''}${ingList(r)}
+      ${pic(r, 'hero sheet-hero', 'card')}${nutriLine(r) ? `<p class="nutri">${nutriLine(r)} <span class="muted">per person</span></p>` : ''}${warnLine(r)}${ingList(r)}
       <p class="muted small">Quantities for two people. You can edit them after adding.</p>
       <button class="btn primary" data-act="addSuggested" data-id="${esc(r.id)}">Add to my recipes</button>`);
   },
@@ -1017,6 +1183,9 @@ document.addEventListener('keydown', e => {
 const onField = e => {
   const el = e.target.closest?.('[data-chg]');
   if (el) C[el.dataset.chg]?.(el);
+  // the workout sheet shows its estimate as the minutes or the intensity change
+  const wf = e.target.closest?.('#workoutForm');
+  if (wf && $('#wkEst')) $('#wkEst').textContent = estimateText(parseNum(wf.elements.min.value) || 0, wf.elements.level.value);
 };
 document.addEventListener('input', onField);
 document.addEventListener('change', onField);
@@ -1046,6 +1215,21 @@ document.addEventListener('submit', async e => {
     if (!name || !kcal) { (name ? f.elements.kcal : f.elements.name).focus(); return; }
     S.foodDraft = { name: '', kcal: '' };
     updateDay({ x: OP.union([{ id: rid(), name, kcal: Math.min(9999, Math.round(kcal)) }]) });
+  }
+  if (f.id === 'weighIn') {
+    const kg = parseWeight(f.elements.w.value, unit());
+    if (kg == null) { $('#weighErr').textContent = `Type your weight in ${unit()}, for example ${unit() === 'lb' ? '165.4' : '75.2'}.`; return; }
+    saveWeight(kg);
+    render(true);
+  }
+  if (f.id === 'workoutForm') {
+    const min = Math.min(300, Math.max(5, Math.round(parseNum(f.elements.min.value) || 60))), level = f.elements.level.value;
+    const w = { min, level, tracked: f.elements.tracked.value === '1', kcal: workoutKcal(min, S.profile.body?.weightKg, level) };
+    closeSheet();
+    // always written to today's date, whatever day is open in the diary
+    S.days = applyPatch(S.days, { [today()]: { w } });
+    store.update(`users/${S.user.uid}/data/days`, { [today()]: { w } });
+    render(true);
   }
   if (f.id === 'outForm') {
     const name = f.elements.name.value.trim(), num0 = k => Math.min(9999, Math.round(parseNum(f.elements[k].value) || 0));

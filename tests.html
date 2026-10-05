@@ -226,6 +226,36 @@ for (let t = 0; t < 3000; t++) {
 eq(['523', '523.6', '523,6', '523 kcal', '523,6 kcal', '1,234', '1.234', '1 234', '1.234,5', '1,234.56', '12,345', '0', '87.4 Cal', ' 640 '].map(L.parseAmount),
   [523, 524, 524, 523, 524, 1234, 1234, 1234, 1235, 1235, 12345, 0, 87, 640], 'calories in any usual spelling');
 eq(['', 'kcal', 'abc', null, undefined, 'Rounded Number', '-'].map(L.parseAmount), [null, null, null, null, null, null, null], 'no number → nothing');
+// ---- meals out of proportion ----
+eq([N.mealFlag(900, false, 2000), N.mealFlag(901, false, 2000), N.mealFlag(1206, false, 2000), N.mealFlag(600, true, 2000), N.mealFlag(601, true, 2000), N.mealFlag(1206, false, 3000), N.mealFlag(0, false, 2000), N.mealFlag(1000, false, 0), N.mealFlag('x', false)],
+  [null, { share: 45 }, { share: 60 }, null, { share: 30 }, null, null, { share: 50 }, null], 'lunch/dinner above 45% of the day, breakfast above 30%');
+eq(N.topSources(DEFAULT_RECIPES.find(r => r.id === 'm-baked-bolognese')).map(t => t.name), ['Ground beef', 'Pasta'], 'what makes a recipe heavy');
+eq(N.topSources({ ingredients: [{ name: 'Unicorn', qty: 1, unit: 'kg' }] }), [], 'unknown food is not a source');
+// ---- workout and history ----
+{
+  eq([N.workoutKcal(60, 80, 'moderate'), N.workoutKcal(60, 80, 'light'), N.workoutKcal(45, 60, 'hard'), N.workoutKcal(60, undefined, 'moderate'), N.workoutKcal(0, 80), N.workoutKcal('x', 80), N.workoutKcal(900, 80, 'moderate'), N.workoutKcal(60, 80, 'nonsense')],
+    [320, 200, 225, 300, 0, 0, 1600, 320], 'workout estimate: (MET − 1) × kg × hours, capped at 5 h');
+  eq([N.burnedOf({ burned: 300 }), N.burnedOf({ burned: 300, w: { kcal: 320, tracked: true } }), N.burnedOf({ burned: 300, w: { kcal: 320, tracked: false } }), N.burnedOf({ w: { kcal: 320 } }), N.burnedOf(undefined)],
+    [300, 300, 620, 320, 0], 'a workout the watch recorded is not added twice');
+  eq(N.dayTotals({ m: { b: { kcal: 500 } }, burned: 200, w: { kcal: 300, tracked: false } }, 2000).left, 2000, 'diary counts the workout estimate');
+  const days = {
+    '2026-10-03': { m: { l: { kcal: 1800 } }, burned: 400 },
+    '2026-10-04': { burned: 250 },                                         // nothing eaten logged: unknown
+    '2026-10-05': { m: { b: { kcal: 600 }, d: { kcal: 2200 } }, x: [{ kcal: 200 }], w: { kcal: 320, tracked: false, min: 60 } },
+  };
+  const h = N.calorieHistory(days, 2500, 4, '2026-10-05');
+  eq(h.rows.map(r => r.d), ['2026-10-02', '2026-10-03', '2026-10-04', '2026-10-05'], 'history: last n days, oldest first');
+  eq(h.rows.map(r => r.deficit), [null, 1100, null, -180], 'deficit = maintenance + burned − eaten; no food logged = unknown');
+  eq([h.logged, h.total, h.avg, h.burnedTotal, h.workouts], [2, 920, 460, 970, 1], 'history totals');
+  eq(N.calorieHistory({}, 2000, 7, '2026-03-02').rows.map(r => r.d)[0], '2026-02-24', 'history crosses months');
+  eq([N.calorieHistory(null, 2000, 3, '2026-10-05').logged, N.calorieHistory(undefined, 2000, 3, '2026-10-05').avg], [0, 0], 'no diary yet');
+}
+// ---- body weight ----
+eq([N.parseWeight('80', 'kg'), N.parseWeight('176.4', 'lb'), N.parseWeight('176,4 lb', 'kg'), N.parseWeight('80 kg', 'lb'), N.parseWeight('80.25 kilograms', 'lb'), N.parseWeight('165 pounds', 'kg'), N.parseWeight(' 72,5 ', 'kg')],
+  [80, 80, 80, 80, 80.3, 74.8, 72.5], 'weights in kg, whatever the unit and the spelling');
+eq([N.parseWeight('', 'kg'), N.parseWeight('abc', 'kg'), N.parseWeight('5', 'kg'), N.parseWeight('900', 'lb'), N.parseWeight(null, 'kg'), N.parseWeight('Weight', 'lb')], [null, null, null, null, null, null], 'not a believable weight → nothing');
+eq(N.weightSeries({ '2026-10-05': { kg: 80.2 }, '2026-10-01': { kg: 81, burned: 3 }, '2026-10-03': { burned: 200 }, '2026-10-04': { kg: 0 } }), [{ d: '2026-10-01', kg: 81 }, { d: '2026-10-05', kg: 80.2 }], 'weigh-ins oldest first, only days with a weight');
+eq([N.weightSeries(null), N.weightSeries({})], [[], []], 'no weigh-ins');
 // ---- suggested calories ----
 {
   const man = { sex: 'm', age: 30, heightCm: 180, weightKg: 80, activity: 'moderate', goal: 'keep' };

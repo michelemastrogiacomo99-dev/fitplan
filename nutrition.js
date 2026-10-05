@@ -140,12 +140,75 @@ export function suggestCalories(body) {
 }
 export const LB = 2.20462, IN = 2.54;
 
+// ---- a meal that is out of proportion ----
+// One meal should not be most of the day: lunch or dinner above 45% of the daily target, breakfast above 30%.
+// Returns null when fine, else { share } = the meal's percentage of the day.
+export function mealFlag(kcal, isBreakfast, target = 2000) {
+  const k = Number(kcal) || 0, t = Number(target) > 0 ? Number(target) : 2000;
+  return k > t * (isBreakfast ? 0.3 : 0.45) ? { share: Math.round(k / t * 100) } : null;
+}
+// the ingredients that bring most of a recipe's calories (per person), biggest first
+export function topSources(recipe, servings = 2, n = 2) {
+  return (recipe?.ingredients || []).map(ing => {
+    const e = food(ing.name), g = e ? grams(ing, e) : null;
+    return { name: String(ing.name || '').trim(), kcal: g == null ? 0 : Math.round(e[0] * g / 100 / servings) };
+  }).filter(x => x.kcal > 0).sort((a, b) => b.kcal - a.kcal).slice(0, n);
+}
+
+// ---- a confirmed workout ----
+export const INTENSITY = { light: [3.5, 'Light'], moderate: [5, 'Moderate'], hard: [6, 'Hard'] };
+// Active calories of a weights session: (MET − 1) × body weight × hours, rounded to 5. The "− 1" leaves out
+// what the body burns anyway at rest, like the watch's active calories do.
+export function workoutKcal(minutes, weightKg, intensity = 'moderate') {
+  const min = Number(minutes), kg = Number(weightKg) > 0 ? Number(weightKg) : 75;
+  if (!(min > 0)) return 0;
+  return Math.round(((INTENSITY[intensity] || INTENSITY.moderate)[0] - 1) * kg * Math.min(min, 300) / 60 / 5) * 5;
+}
+// Active calories of a day: what the watch (or the user) gave, plus the estimate of a confirmed workout
+// the watch did not record. day.w = { min, kcal, tracked }
+export function burnedOf(day) {
+  const watch = Number(day?.burned) > 0 ? Number(day.burned) : 0;
+  return watch + (day?.w && !day.w.tracked ? Number(day.w.kcal) || 0 : 0);
+}
+
+// ---- body weight ----
+// A weight in kg (one decimal) out of what was typed or what the Health shortcut sent: "176.4", "176,4 lb",
+// "80 kg". Without a unit in the text, `unit` ('lb' | 'kg') says how to read it. null if it is not a weight.
+export function parseWeight(raw, unit = 'kg') {
+  const s = String(raw ?? ''), m = s.match(/\d+(?:[.,]\d+)?/);
+  if (!m) return null;
+  const n = parseFloat(m[0].replace(',', '.'));
+  const u = /kg|kilo/i.test(s) ? 'kg' : /lb|pound/i.test(s) ? 'lb' : unit;
+  const kg = u === 'lb' ? n / LB : n;
+  return kg >= 30 && kg <= 300 ? Math.round(kg * 10) / 10 : null;
+}
+// every weigh-in of the diary, oldest first: [{ d, kg }]
+export function weightSeries(days) {
+  return Object.entries(days || {}).filter(([, v]) => Number(v?.kg) > 0).map(([d, v]) => ({ d, kg: Number(v.kg) })).sort((a, b) => a.d.localeCompare(b.d));
+}
+
 // One day of the food diary → what was eaten and what is left.
-//   day = { m: { b|l|d: { kcal, p, c, f } }, x: [{ kcal }], burned }
+//   day = { m: { b|l|d: { kcal, p, c, f } }, x: [{ kcal }], burned, w }
 export function dayTotals(day, target = 0) {
   const eaten = { kcal: 0, p: 0, c: 0, f: 0 };
   for (const m of Object.values(day?.m || {})) if (m) for (const k of Object.keys(eaten)) eaten[k] += Number(m[k]) || 0;
   for (const x of day?.x || []) eaten.kcal += Number(x.kcal) || 0;
-  const burned = Number(day?.burned) > 0 ? Number(day.burned) : 0;
+  const burned = burnedOf(day);
   return { ...eaten, burned, target, left: Math.round(target + burned - eaten.kcal), any: eaten.kcal > 0 || burned > 0 };
+}
+
+// The last `n` days ending at `end` (iso), oldest first. `base` = calories burned in a day without exercise
+// counted apart (maintenance). deficit = base + burned − eaten, only for days with food logged: a day with
+// nothing written down is unknown, not a huge deficit.
+export function calorieHistory(days, base, n, end) {
+  const [y, m, d] = end.split('-').map(Number), rows = [];
+  for (let i = n - 1; i >= 0; i--) {
+    const dt = new Date(y, m - 1, d - i);
+    const id = `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`;
+    const day = days?.[id], t = dayTotals(day, 0);
+    rows.push({ d: id, eaten: Math.round(t.kcal), burned: Math.round(t.burned), workout: !!day?.w, deficit: t.kcal > 0 ? Math.round(base + t.burned - t.kcal) : null });
+  }
+  const logged = rows.filter(r => r.deficit != null), total = logged.reduce((a, r) => a + r.deficit, 0);
+  return { rows, logged: logged.length, total, avg: logged.length ? Math.round(total / logged.length) : 0,
+    burnedTotal: rows.reduce((a, r) => a + r.burned, 0), workouts: rows.filter(r => r.workout).length };
 }
