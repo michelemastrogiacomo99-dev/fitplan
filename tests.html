@@ -6,6 +6,8 @@
 import * as L from './logic.js';
 import { DEFAULT_PROGRAM, DEFAULT_RECIPES, SUGGESTED_RECIPES } from './seed.js';
 import { builtinPhoto } from './images.js';
+import * as N from './nutrition.js';
+import { youtubeId, exerciseVideo } from './videos.js';
 
 const fails = []; let n = 0;
 const ok = (cond, msg) => { n++; if (!cond) fails.push(msg); };
@@ -162,6 +164,54 @@ for (let t = 0; t < 3000; t++) {
   ok(SUGGESTED_RECIPES.every(r => r.name && ['main', 'breakfast'].includes(r.type) && r.ingredients.length && r.ingredients.every(i => i.name && i.qty > 0 && L.UNITS.includes(i.unit))), 'suggested recipes are complete, units known');
   eq(all.filter(r => !/^https:\/\/images\.unsplash\.com\/photo-[\w-]+\?/.test(builtinPhoto(r.id, 'card'))).map(r => r.id), [], 'every built-in dish has a photo');
   eq(builtinPhoto('made-by-user'), '', 'no built-in photo for a user recipe');
+}
+
+// ---- nutrition ----
+{
+  const one = (name, qty, unit) => N.estimate({ ingredients: [{ name, qty, unit }] }, 1);
+  eq(one('Pasta', 100, 'g').kcal, 371, '100 g pasta');
+  eq(one('Eggs', 2, '').kcal, 143, '2 eggs = 100 g');
+  eq(one('eggs', 2, '').kcal, 143, 'case does not matter');
+  eq(one('Egg', 2, '').kcal, 143, 'singular');
+  eq(one('Chicken breast', 1, 'lb').kcal, 544, 'pounds');
+  eq(one('Olive oil', 1, 'tbsp').kcal, 119, 'a tablespoon of oil');
+  eq(one('Milk', 0.5, 'l').kcal, 250, 'litres');
+  eq(one('Grilled chicken breast', 200, 'g').p, 45, 'a food named inside a longer name');
+  eq(one('Unicorn meat', 200, 'g').missing, ['Unicorn meat'], 'unknown food is reported, not guessed');
+  eq(one('Pasta', 2, 'bunch').missing, ['Pasta'], 'a unit that cannot be weighed for that food is reported');
+  eq(one('Pasta', 'abc', 'g').kcal, 0, 'garbage quantity counts as zero');
+  eq(N.estimate({ ingredients: [{ name: 'Pasta', qty: 200, unit: 'g' }] }).kcal, 371, 'a recipe for two → one person gets half');
+  eq(N.estimate(null).kcal, 0, 'no recipe');
+  const manual = N.nutrition({ kcal: 600, p: 40, c: 50, f: 20, ingredients: [{ name: 'Pasta', qty: 200, unit: 'g' }] });
+  eq([manual.kcal, manual.p, manual.manual], [600, 40, true], 'typed calories win over the estimate');
+  eq(N.nutrition({ kcal: 0, ingredients: [{ name: 'Pasta', qty: 200, unit: 'g' }] }).kcal, 371, 'kcal 0 = estimate');
+  eq(N.nutrition(undefined), null, 'nutrition of nothing');
+  const all = [...DEFAULT_RECIPES, ...SUGGESTED_RECIPES], table = all.map(r => [r.id, N.estimate(r)]);
+  eq(table.filter(([, n]) => !n.complete).map(([id, n]) => id + ': ' + n.missing.join('/')), [], 'every ingredient of every built-in recipe is counted');
+  eq(table.filter(([, n]) => n.kcal < 180 || n.kcal > 1300).map(([id, n]) => id + ' ' + n.kcal), [], 'built-in recipes land in a believable range per person');
+  ok(table.every(([, n]) => Math.abs(n.p * 4 + n.c * 4 + n.f * 9 - n.kcal) < n.kcal * 0.2 + 30), 'macros add up to the calories (±20%)');
+  window.__nutri = table.map(([id, n]) => `${id}: ${n.kcal} kcal P${n.p} C${n.c} F${n.f}`);
+  // diary
+  const day = { m: { b: { kcal: 300, p: 20, c: 30, f: 10 }, d: { kcal: 700, p: 40, c: 80, f: 20 } }, x: [{ kcal: 150 }, { kcal: 'x' }], burned: 400 };
+  eq(N.dayTotals(day, 2000), { kcal: 1150, p: 60, c: 110, f: 30, burned: 400, target: 2000, left: 1250, any: true }, 'day: eaten, burned, left');
+  eq(N.dayTotals({ m: { b: { kcal: 2500 } } }, 2000).left, -500, 'over target is negative');
+  eq(N.dayTotals(undefined, 2000), { kcal: 0, p: 0, c: 0, f: 0, burned: 0, target: 2000, left: 2000, any: false }, 'empty day');
+  eq(L.weekOf('2026-10-05'), '2026-10-05', 'weekOf a Monday'); eq(L.weekOf('2026-10-11'), '2026-10-05', 'weekOf a Sunday');
+  eq(L.weekOf('2027-01-01'), '2026-12-28', 'weekOf across the year'); eq(L.shiftDay('2026-10-31', 1), '2026-11-01', 'shiftDay across DST and month');
+  eq(L.shiftDay('2026-03-01', -1), '2026-02-28', 'shiftDay back');
+}
+// ---- videos ----
+{
+  eq(youtubeId('https://www.youtube.com/watch?v=rrJIyZGlK8c'), 'rrJIyZGlK8c', 'watch link');
+  eq(youtubeId('https://www.youtube.com/watch?feature=share&v=rrJIyZGlK8c&t=3'), 'rrJIyZGlK8c', 'watch link with other parameters');
+  eq(youtubeId('https://youtu.be/rrJIyZGlK8c?si=abc'), 'rrJIyZGlK8c', 'short link');
+  eq(youtubeId('youtube.com/shorts/rrJIyZGlK8c'), 'rrJIyZGlK8c', 'shorts link');
+  eq(youtubeId('https://m.youtube.com/embed/rrJIyZGlK8c'), 'rrJIyZGlK8c', 'embed link');
+  eq([youtubeId(''), youtubeId(undefined), youtubeId('hello'), youtubeId('https://vimeo.com/123'), youtubeId('javascript:alert(1)')], ['', '', '', '', ''], 'anything else gives no video');
+  const exs = DEFAULT_PROGRAM.flatMap(d => d.exercises);
+  eq(exs.filter(e => !/^[\w-]{11}$/.test(exerciseVideo(e))).map(e => e.id), [], 'every default exercise has a video');
+  eq(exerciseVideo({ id: 'bench', video: 'https://youtu.be/aaaaaaaaaaa' }), 'aaaaaaaaaaa', 'an exercise\'s own link wins');
+  eq(exerciseVideo({ id: 'my-own' }), '', 'no video for an unknown exercise');
 }
 
 document.title = fails.length ? `FAIL ${fails.length}/${n}` : `PASS ${n}`;

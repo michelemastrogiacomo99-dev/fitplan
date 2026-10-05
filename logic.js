@@ -15,6 +15,9 @@ export function planningWeek(now = new Date()) {
   if (dow(now) >= 4) m.setDate(m.getDate() + 7);
   return iso(m);
 }
+// the Monday (iso) of the week a date (iso) belongs to
+export function weekOf(day) { const d = fromIso(day); d.setDate(d.getDate() - dow(d)); return iso(d); }
+export function shiftDay(day, n) { const d = fromIso(day); d.setDate(d.getDate() + n); return iso(d); }
 export function shiftWeek(id, n) { const d = fromIso(id); d.setDate(d.getDate() + 7 * n); return iso(d); }
 
 export const convWeight = (w, from, to) =>

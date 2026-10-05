@@ -77,7 +77,7 @@ export const DEFAULT_RECIPES = [
   r('m-legume-pasta', 'Pasta with Legumes', 'main', [['Pasta', 180, 'g'], ['Canned beans or chickpeas', 400, 'g'], ['Tomato passata', 200, 'g'], ['Garlic', 2, 'cloves']], true),
   r('m-chicken-thighs', 'Chicken Thighs, Potatoes, Peppers and Corn', 'main', [['Chicken thighs', 600, 'g'], ['Potatoes', 500, 'g'], ['Bell peppers', 2, ''], ['Corn', 2, 'ears']]),
   r('m-shrimp', 'Shrimp, Potatoes and Asparagus', 'main', [['Shrimp', 400, 'g'], ['Potatoes', 500, 'g'], ['Asparagus', 250, 'g'], ['Garlic', 2, 'cloves']]),
-  r('m-roast-chicken', 'Roast Chicken, Potatoes and Parsnips', 'main', [['Whole chicken', 1, ''], ['Potatoes', 600, 'g'], ['Parsnips', 300, 'g']]),
+  r('m-roast-chicken', 'Roast Chicken, Potatoes and Parsnips', 'main', [['Whole chicken', 0.5, ''], ['Potatoes', 600, 'g'], ['Parsnips', 300, 'g']]),
   r('m-ciambotta', 'Ciambotta', 'main', [['Eggplant', 1, ''], ['Zucchini', 2, ''], ['Bell peppers', 2, ''], ['Potatoes', 300, 'g'], ['Tomatoes', 300, 'g'], ['Onion', 1, '']]),
 ];
 
