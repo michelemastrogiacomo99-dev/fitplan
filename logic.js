@@ -62,6 +62,13 @@ export function applyPatch(doc, patch) {
 
 export const isMain = r => r.type !== 'breakfast';
 
+// A meal eaten away from home: it sits in the week plan like a recipe, but nothing is bought or cooked for it.
+export const OUT = '@out';
+export const blankPlan = () => Array.from({ length: 7 }, () => ({ b: null, l: null, d: null, left: {} }));
+export const outCount = plan => (plan || []).reduce((n, day) => n + (day?.l === OUT) + (day?.d === OUT), 0);
+// lunches and dinners still to cover with picked dishes: the weekly number, less the ones eaten out
+export const needed = (perWeek, plan) => Math.max(0, Math.min(perWeek, 14 - outCount(plan)));
+
 function likedMains(liked, recipes) {
   const byId = new Map(recipes.map(r => [r.id, r]));
   return [...new Set(liked || [])].filter(id => byId.has(id) && isMain(byId.get(id))).map(id => byId.get(id));
@@ -75,10 +82,12 @@ export function coverage(liked, recipes) {
 // 7 days of { b, l, d, left }. A leftovers dish goes to a dinner and to the next day's lunch
 // (left.l = true); the others take the remaining slots once each; if slots are still empty
 // the picked dishes repeat, never on the same or on a neighbouring day when that can be avoided.
-export function buildPlan(liked, recipes) {
+// Meals marked "eating out" in `keep` (an earlier plan) stay where they are and nothing is cooked for them.
+export function buildPlan(liked, recipes, keep) {
   const mains = likedMains(liked, recipes);
   const bfs = recipes.filter(r => r.type === 'breakfast').map(r => r.id);
-  const plan = Array.from({ length: 7 }, (_, d) => ({ b: bfs.length ? bfs[d % bfs.length] : null, l: null, d: null, left: {} }));
+  const out = (d, m) => keep?.[d]?.[m] === OUT ? OUT : null;
+  const plan = Array.from({ length: 7 }, (_, d) => ({ b: out(d, 'b') ?? (bfs.length ? bfs[d % bfs.length] : null), l: out(d, 'l'), d: out(d, 'd'), left: {} }));
   const count = {};
   const put = (d, m, id, left) => { plan[d][m] = id; if (left) plan[d].left[m] = true; count[id] = (count[id] || 0) + 1; };
 

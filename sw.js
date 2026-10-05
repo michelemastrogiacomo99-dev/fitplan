@@ -1,7 +1,7 @@
 // Offline support. The app's files are stored at install; after that each launch asks the network first
 // (so a new version shows up at once) and falls back to the stored copy when there is no signal or the
 // signal is too slow (gym). Bump VERSION whenever the list of files changes.
-const VERSION = 'fitplan-v4';
+const VERSION = 'fitplan-v5';
 const PHOTOS = 'fitplan-photos'; // dish photos, kept across versions
 const FILES = ['./', 'index.html', 'styles.css', 'app.js', 'logic.js', 'store.js', 'seed.js', 'images.js', 'nutrition.js', 'videos.js', 'firebase-config.js',
   'manifest.webmanifest', 'icon-180.png', 'icon-512.png'];

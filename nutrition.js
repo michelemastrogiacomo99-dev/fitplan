@@ -112,6 +112,34 @@ export function nutrition(recipe) {
   return { ...estimate(recipe), manual: false };
 }
 
+// ---- suggested daily calories (Mifflin-St Jeor resting energy × activity, shifted by the goal) ----
+export const ACTIVITY = {
+  sedentary: [1.2, 'Mostly sitting (or I log my watch calories)'],
+  light: [1.375, 'Light: 1–3 workouts a week'],
+  moderate: [1.55, 'Moderate: 3–5 workouts a week'],
+  very: [1.725, 'Very active: 6–7 workouts a week'],
+  extra: [1.9, 'Physical job plus training'],
+};
+export const GOAL = {
+  lose2: [-500, 'Lose about 1 lb (0.5 kg) a week'],
+  lose1: [-250, 'Lose slowly'],
+  keep: [0, 'Keep my weight'],
+  gain1: [250, 'Gain slowly'],
+  gain2: [500, 'Gain about 1 lb (0.5 kg) a week'],
+};
+// body = { sex: 'm' | 'f', age, heightCm, weightKg, activity, goal } → null until everything needed is filled in
+export function suggestCalories(body) {
+  const b = body || {}, age = Number(b.age), h = Number(b.heightCm), w = Number(b.weightKg);
+  if (!['m', 'f'].includes(b.sex) || !(age >= 14 && age <= 100) || !(h >= 120 && h <= 230) || !(w >= 35 && w <= 250)) return null;
+  const bmr = 10 * w + 6.25 * h - 5 * age + (b.sex === 'm' ? 5 : -161);
+  const tdee = bmr * (ACTIVITY[b.activity] || ACTIVITY.light)[0];
+  const floor = b.sex === 'm' ? 1500 : 1200; // never suggest less than this
+  const target = Math.max(floor, tdee + (GOAL[b.goal] || GOAL.keep)[0]);
+  const round10 = n => Math.round(n / 10) * 10;
+  return { bmr: round10(bmr), maintain: round10(tdee), target: round10(target), protein: Math.round(w * 1.8 / 5) * 5, floored: target === floor };
+}
+export const LB = 2.20462, IN = 2.54;
+
 // One day of the food diary → what was eaten and what is left.
 //   day = { m: { b|l|d: { kcal, p, c, f } }, x: [{ kcal }], burned }
 export function dayTotals(day, target = 0) {

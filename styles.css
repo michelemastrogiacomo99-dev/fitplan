@@ -219,6 +219,15 @@ textarea { resize: vertical; }
 a.btn { display: flex; align-items: center; justify-content: center; text-decoration: none; }
 .seg button { padding: 0 4px; }
 
+/* about you */
+.pair { display: flex; gap: 6px; flex: 0 1 130px; }
+.pair input { text-align: center; padding: 10px 4px; }
+.seg.inline.wide-seg { width: 170px; }
+.suggest { background: var(--soft); border-radius: 14px; padding: 12px; display: flex; flex-direction: column; gap: 8px; }
+.suggest .kcal-head strong { font-size: 30px; }
+.field.col > select { text-align: left; }
+.meal > .link { flex: none; padding: 10px 0 10px 8px; }
+
 /* shopping */
 .list { gap: 0; padding: 4px 14px; }
 .shop { display: flex; align-items: center; gap: 12px; width: 100%; min-height: 48px; text-align: left; border-top: 1px solid var(--line); }

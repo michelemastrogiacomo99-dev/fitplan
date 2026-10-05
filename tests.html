@@ -200,6 +200,41 @@ for (let t = 0; t < 3000; t++) {
   eq(L.weekOf('2027-01-01'), '2026-12-28', 'weekOf across the year'); eq(L.shiftDay('2026-10-31', 1), '2026-11-01', 'shiftDay across DST and month');
   eq(L.shiftDay('2026-03-01', -1), '2026-02-28', 'shiftDay back');
 }
+// ---- eating out ----
+{
+  const rs = [...bf, ...Array.from({ length: 14 }, (_, i) => mk('m' + i, i < 3))];
+  const liked = rs.filter(L.isMain).map(r => r.id);
+  const keep = L.blankPlan(); keep[1].l = L.OUT; keep[4].d = L.OUT; keep[6].b = L.OUT; keep[0].d = 'old-dish';
+  eq([L.outCount(keep), L.needed(14, keep), L.needed(10, keep), L.needed(14, null), L.needed(14, undefined)], [2, 12, 10, 14, 14], 'eating out lowers the dishes to pick');
+  const p = L.buildPlan(liked, rs, keep);
+  eq([p[1].l, p[4].d, p[6].b], [L.OUT, L.OUT, L.OUT], 'meals eaten out stay where they were');
+  ok(p[0].d !== 'old-dish' && mains(p).filter(x => x !== L.OUT).every(id => liked.includes(id)) && mains(p).every(Boolean), 'the rest is rebuilt from the picked dishes');
+  ok(p.every((d, i) => !d.left.l || (d.l !== L.OUT && p[i - 1].d === d.l)), 'leftovers never land on a meal eaten out');
+  eq(L.shoppingItems(p, rs).length, 1, 'shopping ignores meals eaten out');
+  eq(L.shoppingItems([{ b: L.OUT, l: L.OUT, d: L.OUT }], rs), [], 'a day fully out buys nothing');
+  const all = L.blankPlan().map(() => ({ b: null, l: L.OUT, d: L.OUT, left: {} }));
+  eq([L.needed(14, all), mains(L.buildPlan(liked, rs, all)).every(x => x === L.OUT)], [0, true], 'a whole week out needs no dishes');
+  for (let t = 0; t < 500; t++) { // random outs + random picks keep every guarantee
+    const k = 1 + Math.floor(rnd() * 16), rr = [...bf, ...Array.from({ length: k }, (_, i) => mk('m' + i, rnd() < 0.4))];
+    const fixed = L.blankPlan(); fixed.forEach(d => { if (rnd() < 0.25) d.l = L.OUT; if (rnd() < 0.25) d.d = L.OUT; });
+    const lk = shuffle(rr.filter(L.isMain).map(r => r.id)), q = L.buildPlan(lk, rr, fixed);
+    ok(q.every((d, i) => (fixed[i].l === L.OUT) === (d.l === L.OUT) && (fixed[i].d === L.OUT) === (d.d === L.OUT) && d.l && d.d), `random outs #${t}: outs kept, nothing empty`);
+    ok(q.every((d, i) => !d.left.l || (i > 0 && q[i - 1].d === d.l && d.l !== L.OUT)), `random outs #${t}: leftovers follow their dinner`);
+  }
+}
+// ---- suggested calories ----
+{
+  const man = { sex: 'm', age: 30, heightCm: 180, weightKg: 80, activity: 'moderate', goal: 'keep' };
+  eq(N.suggestCalories(man), { bmr: 1780, maintain: 2760, target: 2760, protein: 145, floored: false }, 'man 30y 180cm 80kg, moderate, keep');
+  eq(N.suggestCalories({ ...man, goal: 'lose2' }).target, 2260, 'lose: 500 less');
+  eq(N.suggestCalories({ ...man, goal: 'gain1' }).target, 3010, 'gain slowly: 250 more');
+  const woman = { sex: 'f', age: 28, heightCm: 165, weightKg: 60, activity: 'sedentary', goal: 'lose2' };
+  eq([N.suggestCalories(woman).bmr, N.suggestCalories(woman).maintain, N.suggestCalories(woman).target, N.suggestCalories(woman).floored], [1330, 1600, 1200, true], 'woman: never below 1200');
+  eq(N.suggestCalories({ ...man, activity: undefined, goal: undefined }).maintain, 2450, 'activity defaults to light, goal to keep');
+  eq([N.suggestCalories(null), N.suggestCalories({}), N.suggestCalories({ ...man, sex: '' }), N.suggestCalories({ ...man, age: 5 }), N.suggestCalories({ ...man, heightCm: 18 }), N.suggestCalories({ ...man, weightKg: 0 }), N.suggestCalories({ ...man, weightKg: 'abc' })],
+    [null, null, null, null, null, null, null], 'no suggestion until the answers make sense');
+  ok(Math.abs(180 / N.IN / 12 - 5.905) < 0.01 && Math.abs(80 * N.LB - 176.4) < 0.1, 'unit constants');
+}
 // ---- videos ----
 {
   eq(youtubeId('https://www.youtube.com/watch?v=rrJIyZGlK8c'), 'rrJIyZGlK8c', 'watch link');
